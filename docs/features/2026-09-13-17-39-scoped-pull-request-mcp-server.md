@@ -1,6 +1,6 @@
 ---
 type: feature
-status: proposed
+status: completed
 title: Scoped pull-request MCP server
 description: Build and publish a Python MCP server exposing provider-neutral GitHub and Bitbucket Cloud pull-request tools over network-capable MCP transport.
 tags:
@@ -65,7 +65,13 @@ Required tools:
 - GitHub: `GITHUB_TOKEN`
 - Bitbucket Cloud: `BITBUCKET_EMAIL` and `BITBUCKET_API_TOKEN`
 
-Credentials are read only from the process environment or an equivalent secret-injection mechanism. They are never accepted as tool arguments, written to files, placed in URLs, logged, or returned in tool results. Missing credentials produce clear, non-sensitive errors. The server does not attempt to configure credentials or access a credential store.
+Credentials are read only from the process environment or an equivalent secret-injection mechanism. They are never accepted as tool arguments, written to ordinary application files, placed in URLs, logged, or returned in tool results. Missing credentials produce clear, non-sensitive errors.
+
+The initial implementation uses environment mode only. The documented variables are `GITHUB_TOKEN`, `BITBUCKET_EMAIL`, and `BITBUCKET_API_TOKEN`. The container runtime supplies these values; the image contains no secrets. The server never copies credentials into tool results, logs, command-line arguments, or ordinary application files.
+
+The container is the isolation boundary: agents are kept away from the server container's filesystem, process namespace, and secret-bearing environment. The recommended container runs the server as a dedicated non-root UID with a read-only root filesystem, dropped capabilities, and no shell or debugging tools. This design assumes the deployment platform enforces separation between the agent and server containers; it does not attempt to defend against a privileged agent that can inspect the server container or host.
+
+The credential source remains behind a small provider credential interface so a later Vault, cloud secret-manager, or Unix-socket broker integration does not change MCP tools. No broker or secret-file mode is required for the initial implementation.
 
 ### Transport and runtime
 
@@ -74,6 +80,7 @@ Credentials are read only from the process environment or an equivalent secret-i
 - Stdio transport for local MCP hosts and development.
 - Configuration through environment variables for bind host, port, and log level, with safe defaults documented in the README.
 - `uv sync`, `uv run`, `uv build`, and `uv tool install` are supported workflows.
+- Container startup documentation covering runtime environment secrets, dedicated UID permissions, read-only filesystems, and the separate-container requirement for untrusted agents.
 
 ### Repository contents
 
@@ -98,6 +105,9 @@ Credentials are read only from the process environment or an equivalent secret-i
 10. Tests cover every tool's happy path, validation failures, authentication configuration, pagination, provider error mapping, and write-result normalization.
 11. `uv build` produces an installable distribution, and the documented `uv tool install` path works from the built artifact.
 12. No tokens, authorization headers, live repository data, or generated virtual environments are committed.
+13. Container deployment does not require secrets in the image, source tree, ordinary application files, or command-line arguments.
+14. Tests cover environment loading, missing credentials, and redaction guarantees.
+15. Documentation clearly states that the deployment platform must keep agents away from the server container's filesystem, process namespace, and secret-bearing environment.
 
 ## Acceptance criteria
 
@@ -128,6 +138,7 @@ The initial implementation may use one server process with both stdio and Stream
 - **API drift:** isolate endpoint paths and response normalization in adapters; pin compatible dependencies through `uv.lock`.
 - **Credential leakage:** environment-only credentials, redacted logging, and tests that assert headers are not returned.
 - **Network exposure:** bind to localhost by default and document reverse-proxy/authentication requirements for remote exposure.
+- **Container co-tenancy:** environment credentials are safe only when the deployment platform keeps agents away from the server container and its process namespace.
 
 ## Validation
 
@@ -142,6 +153,12 @@ git diff --check
 ```
 
 Run a local protocol smoke test using the stdio entry point and an HTTP health/protocol smoke test against the Streamable HTTP entry point. Use mocked provider transports for functional tests; live provider tests are optional and must be opt-in, never required for the default suite.
+
+Container validation must also verify that the image contains no credential values, the server starts with runtime-provided environment variables, and logs/tool results contain no credential material. The deployment documentation must not claim isolation against a privileged agent sharing the server container or host.
+
+## Amendments
+
+- Use environment-only credentials, with the deployment platform keeping agents away from the server container's filesystem, process namespace, and secret-bearing environment. Defer secret-file and external credential-broker modes.
 
 ## Lifecycle
 
