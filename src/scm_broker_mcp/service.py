@@ -1,4 +1,9 @@
-"""Provider-neutral pull-request service and boundary validation."""
+"""Provider-neutral pull-request service and boundary validation.
+
+Examples:
+    Input: provider-neutral operation arguments.
+    Output: a normalized result mapping or safe error.
+"""
 
 from typing import Any
 
@@ -10,19 +15,70 @@ _LIST_OPS = {"list_repositories", "list_pull_requests", "list_pull_request_commi
 
 
 class BrokerService:
-    """Dispatch explicitly validated MCP operations to provider adapters."""
+    """Dispatch validated MCP operations to provider adapters.
+
+    Args:
+        adapters: Optional provider-to-adapter mapping, useful for mocked tests.
+
+    Examples:
+        Input: ``BrokerService(adapters={"github": fake_adapter})``.
+        Output: A service whose ``execute`` result uses provider-neutral fields.
+    """
 
     def __init__(self, adapters: dict[str, Any] | None = None) -> None:
+        """Create the service and default GitHub and Bitbucket adapters.
+
+        Args:
+            adapters: Optional injected adapter mapping.
+
+        Examples:
+            Input: ``adapters=None``.
+            Output: ``service.adapters`` contains ``"github"`` and ``"bitbucket"``.
+        """
         self.adapters = adapters or {"github": GitHubAdapter(), "bitbucket": BitbucketAdapter()}
 
     def adapter(self, provider: str) -> Any:
-        """Return an adapter or a structured validation error."""
+        """Return an adapter for a supported provider.
+
+        Args:
+            provider: ``"github"`` or ``"bitbucket"``.
+
+        Returns:
+            The configured provider adapter.
+
+        Raises:
+            BrokerError: If the provider is not configured.
+
+        Examples:
+            Input: ``provider="github"``.
+            Output: The configured ``GitHubAdapter`` instance.
+        """
         if provider not in self.adapters:
             raise BrokerError("invalid_provider", "provider must be 'github' or 'bitbucket'")
         return self.adapters[provider]
 
     async def execute(self, operation: str, provider: str, repo: str | None = None, pr: str | None = None, raw: bool = False, **kwargs: Any) -> Any:
-        """Validate operation arguments, invoke the provider, and normalize output."""
+        """Validate arguments, invoke an adapter, and normalize its output.
+
+        Args:
+            operation: MCP operation name.
+            provider: Provider key.
+            repo: Repository identity, when required.
+            pr: Pull-request identifier, when required.
+            raw: Include provider payloads in normalized results.
+            **kwargs: Operation-specific input and pagination fields.
+
+        Returns:
+            A normalized mapping shaped as a page, pull request, diff, or write
+            result depending on ``operation``.
+
+        Raises:
+            BrokerError: If required arguments or pagination are invalid.
+
+        Examples:
+            Input: ``execute("list_pull_requests", "github", "o/r", page=1)``.
+            Output: ``{"items": [...], "page": 1, "page_size": 30, "has_more": False}``.
+        """
         if operation != "list_repositories" and (not repo or "/" not in repo):
             raise BrokerError("invalid_repository", "repo must be 'owner/name' or 'workspace/slug'")
         if operation not in {"list_repositories", "list_pull_requests", "create_pull_request"} and not pr:

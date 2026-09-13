@@ -1,4 +1,12 @@
-"""Typed provider adapters backed by httpx."""
+"""Typed provider adapters backed by httpx.
+
+Adapters keep authentication and provider-specific request shapes out of the
+provider-neutral service and never return credentials in response data.
+
+Examples:
+    Input: an operation name and provider-neutral arguments.
+    Output: a decoded provider mapping or diff text.
+"""
 
 import base64
 from typing import Any
@@ -10,15 +18,45 @@ from .errors import BrokerError, map_http_error
 
 
 class ProviderAdapter:
-    """Common REST adapter contract for supported providers."""
+    """Common REST adapter contract for supported providers.
+
+    Args:
+        client: Optional async HTTP client, normally a mocked transport in tests.
+
+    Examples:
+        Input: ``ProviderAdapter(client=mocked_client)``.
+        Output: An adapter whose ``request`` result is a decoded mapping.
+    """
 
     name = ""
     base_url = ""
 
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
+        """Create an adapter with a reusable HTTP client.
+
+        Args:
+            client: Client used for requests; one is created when omitted.
+
+        Examples:
+            Input: ``client=None``.
+            Output: An adapter with a 30-second timeout client.
+        """
         self.client = client or httpx.AsyncClient(timeout=30)
 
     def _headers(self, *, accept: str | None = None) -> dict[str, str]:
+        """Build authenticated, provider-specific request headers.
+
+        Args:
+            accept: Optional response media type.
+
+        Returns:
+            Header mapping containing authentication and ``Accept`` values.
+
+        Examples:
+            Input: ``accept="application/json"``.
+            Output: ``{"Authorization": "Bearer [secret]", "Accept": "application/json"}``
+            for GitHub; the actual secret is never documented or returned.
+        """
         credentials = load_credentials(self.name)
         if self.name == "github":
             return {"Authorization": f"Bearer {credentials.token}", "Accept": accept or "application/vnd.github+json"}
@@ -26,7 +64,26 @@ class ProviderAdapter:
         return {"Authorization": f"Basic {encoded}", "Accept": accept or "application/json"}
 
     async def request(self, method: str, path: str, *, params: dict[str, Any] | None = None, json: Any = None, accept: str | None = None) -> Any:
-        """Perform an authenticated request and map unsafe provider errors."""
+        """Perform an authenticated request and map unsafe provider errors.
+
+        Args:
+            method: HTTP method such as ``"GET"`` or ``"POST"``.
+            path: Provider-relative API path.
+            params: Optional query parameter mapping.
+            json: Optional JSON request body shape.
+            accept: Optional response media type, including diff media types.
+
+        Returns:
+            Decoded JSON data, an empty mapping for an empty response, or text
+            for a requested diff.
+
+        Raises:
+            BrokerError: For network, HTTP, or malformed response failures.
+
+        Examples:
+            Input: ``method="GET", path="/user/repos", params={"page": 1}``.
+            Output: ``[{"id": "repo-1", "name": "demo"}]`` from JSON.
+        """
         try:
             response = await self.client.request(method, self.base_url + path, headers=self._headers(accept=accept), params=params, json=json)
         except httpx.HTTPError as exc:
@@ -44,12 +101,34 @@ class ProviderAdapter:
 
 
 class GitHubAdapter(ProviderAdapter):
-    """GitHub REST pull-request adapter."""
+    """GitHub REST pull-request adapter.
+
+    Examples:
+        Input: ``call("get_pull_request", "owner/repo", "7")``.
+        Output: A GitHub response mapping for pull request 7.
+    """
 
     name, base_url = "github", "https://api.github.com"
 
     async def call(self, operation: str, repo: str | None = None, pr: str | None = None, **kwargs: Any) -> Any:
-        """Execute one operation using GitHub's REST contract."""
+        """Execute one operation using GitHub's REST contract.
+
+        Args:
+            operation: One of the supported MCP operation names.
+            repo: Repository identity in ``owner/name`` form.
+            pr: Pull-request identifier when required.
+            **kwargs: Operation-specific input shape, such as branches or body.
+
+        Returns:
+            The decoded provider response mapping or diff text.
+
+        Raises:
+            BrokerError: If validation fails or the provider rejects the call.
+
+        Examples:
+            Input: ``operation="create_pull_request", repo="o/r", title="Fix", source_branch="bug", target_branch="main"``.
+            Output: ``{"number": 8, "state": "open", "html_url": "https://github.com/o/r/pull/8"}``.
+        """
         if operation == "list_repositories":
             return await self.request("GET", "/user/repos", params={"page": kwargs.get("page", 1), "per_page": kwargs.get("page_size", 30)})
         if not repo:
@@ -90,12 +169,34 @@ class GitHubAdapter(ProviderAdapter):
 
 
 class BitbucketAdapter(ProviderAdapter):
-    """Bitbucket Cloud REST pull-request adapter."""
+    """Bitbucket Cloud REST pull-request adapter.
+
+    Examples:
+        Input: ``call("list_pull_requests", "workspace/repo", page=1)``.
+        Output: A Bitbucket page mapping with a ``values`` list and optional ``next`` URL.
+    """
 
     name, base_url = "bitbucket", "https://api.bitbucket.org/2.0"
 
     async def call(self, operation: str, repo: str | None = None, pr: str | None = None, **kwargs: Any) -> Any:
-        """Execute one operation using Bitbucket Cloud's REST contract."""
+        """Execute one operation using Bitbucket Cloud's REST contract.
+
+        Args:
+            operation: One of the supported MCP operation names.
+            repo: Repository identity in ``workspace/slug`` form.
+            pr: Pull-request identifier when required.
+            **kwargs: Operation-specific input shape.
+
+        Returns:
+            The decoded provider response mapping or diff text.
+
+        Raises:
+            BrokerError: If the operation is unsupported or the provider fails.
+
+        Examples:
+            Input: ``operation="list_pull_requests", repo="ws/repo", page=1``.
+            Output: ``{"values": [{"id": 3, "state": "OPEN"}], "next": None}``.
+        """
         if operation == "list_repositories":
             path = f"/repositories/{repo}" if repo else "/repositories"
             return await self.request("GET", path, params={"page": kwargs.get("page", 1), "pagelen": kwargs.get("page_size", 30)})
