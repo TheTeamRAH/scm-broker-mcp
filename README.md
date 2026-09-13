@@ -1,45 +1,64 @@
 # scm-broker-mcp
 
-A Python MCP server exposing provider-neutral pull-request workflows for GitHub and Bitbucket Cloud.
+A provider-neutral MCP server for pull-request workflows on GitHub and Bitbucket Cloud. It uses the official Python MCP SDK and supports Streamable HTTP plus stdio.
 
-## Repo Structure
+## Getting started
 
-```text
-.
-├── AGENTS.md
-├── docs/
-│   └── features/
-│       ├── README.md
-│       └── 2026-09-13-17-39-scoped-pull-request-mcp-server.md
-├── README.md
-└── .gitignore
+```bash
+uv sync --dev
+export GITHUB_TOKEN='…'                         # only if using GitHub
+export BITBUCKET_EMAIL='you@example.com'         # only if using Bitbucket
+export BITBUCKET_API_TOKEN='…'
+uv run scm-broker-mcp-http                         # http://127.0.0.1:8000/mcp
+# or: uv run scm-broker-mcp-stdio
 ```
 
-Implementation is not yet recorded; this repository currently contains the proposed feature specification and project guidance.
+The fourteen tools accept `provider` (`github` or `bitbucket`), `repo` (`owner/name` or `workspace/slug`), and operation-specific fields. Results have stable `id`, `state`, `url`, pagination, and optional `raw` fields. Credentials are never tool arguments or logs. Configure authentication at a reverse proxy before exposing the HTTP endpoint beyond localhost.
 
-## Getting Started
+## Tools
 
-Implementation has not started. After approval, the project will use `uv` for development, testing, building, and installation. Provider credentials will be configured through secret injection using `GITHUB_TOKEN`, `BITBUCKET_EMAIL`, and `BITBUCKET_API_TOKEN`; credentials must never be committed or logged.
+`list_repositories`, `list_pull_requests`, `get_pull_request`, `get_pull_request_diff`, `list_pull_request_commits`, `create_pull_request`, `update_pull_request`, `update_pull_request_reviewers`, `close_pull_request`, `merge_pull_request`, `add_pull_request_comment`, `list_pull_request_comments`, `list_pull_request_reviews`, and `submit_pull_request_review`.
 
-### Container deployment
+Bitbucket Cloud does not provide the same reviewer-update and review-submission semantics as GitHub; unsupported capabilities return structured `unsupported_operation` errors. Provider permissions and branch rules still apply.
 
-The image contains no secrets. The container runtime supplies `GITHUB_TOKEN`, `BITBUCKET_EMAIL`, and `BITBUCKET_API_TOKEN` as environment variables. Run the server as a dedicated non-root UID with a read-only root filesystem and dropped capabilities. Keep agents away from the server container's filesystem, process namespace, and environment; allow access only through authenticated MCP networking. Environment variables cannot protect a secret from a privileged agent sharing the container.
+## Container deployment
+
+Build from source without secrets:
+
+```dockerfile
+FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+WORKDIR /app
+COPY . .
+RUN uv sync --no-dev && useradd --uid 10001 --system broker
+USER 10001
+ENTRYPOINT ["uv", "run", "--no-dev", "scm-broker-mcp-http"]
+```
+
+Inject credentials at runtime, never into the image, source tree, files, URLs, or command line. Run as a dedicated non-root UID with a read-only root filesystem and dropped capabilities. Keep untrusted agents away from the server container's filesystem, process namespace, and secret-bearing environment. This assumes the deployment platform enforces container separation; environment credentials do not protect against a privileged agent sharing the container or host. Bind to localhost by default and use an authenticated reverse proxy for remote access.
 
 ## Recent Features
 
 | Date | Purpose | Spec | Author |
 | --- | --- | --- | --- |
+| 2026-09-13-17-39 | Scoped pull-request MCP server | [Scoped pull-request MCP server](docs/features/2026-09-13-17-39-scoped-pull-request-mcp-server.md) | whose-footprints-are-these |
 
-No implemented features are recorded yet.
+## Repo Structure
 
-See [all feature specifications](docs/features/README.md).
+```text
+src/scm_broker_mcp/  # server, service, schemas, provider adapters
+tests/                # mocked contract and protocol tests
+docs/features/        # approved feature specifications
+```
 
+## Development
+
+```bash
+uv run pytest
+uv build
+uv lock --check
+git diff --check
+```
 ## Contributing
 
-This is an AI-first development repository. Point your agent or model at [AGENTS.md](AGENTS.md) before contributing.
-
-- Create and have a complete feature specification reviewed before implementation.
-- Use focused feature branches and test-driven development for code changes.
-- Use `uv` for Python environments, dependencies, tests, and builds.
-- Follow the documentation structure, timestamp rules, and OKF requirements in `AGENTS.md`.
-- Consult discovery documentation before related work and keep reusable lessons current.
+This is an AI-first repository. Read [AGENTS.md](AGENTS.md), use a reviewed feature specification, work on a focused branch, and follow test-driven development. Do not commit credentials or generated environments.

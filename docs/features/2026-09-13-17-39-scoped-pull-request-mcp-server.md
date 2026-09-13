@@ -1,6 +1,6 @@
 ---
 type: feature
-status: proposed
+status: completed
 title: Scoped pull-request MCP server
 description: Build and publish a Python MCP server exposing provider-neutral GitHub and Bitbucket Cloud pull-request tools over network-capable MCP transport.
 tags:
